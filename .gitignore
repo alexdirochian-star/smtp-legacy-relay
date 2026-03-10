@@ -1,0 +1,7 @@
+relay
+relay.exe
+queue/
+*.eml
+*.sending
+*.log
+.env
