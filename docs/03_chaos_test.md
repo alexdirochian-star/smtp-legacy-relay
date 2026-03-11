@@ -1,40 +1,115 @@
-# Chaos Testing
+# Chaos Test Plan
 
-Failure simulation procedures for the relay system.
+## Purpose
 
-## Network outage
+This document defines reliability validation tests for the relay.
 
-Simulate loss of network connectivity.
+The relay is designed as a store-and-forward message relay using a filesystem queue as the source of truth. Chaos tests validate that the system behaves correctly under common infrastructure failures.
 
-Expected behaviour:
+Reliability invariant:
 
-Messages remain in the filesystem queue.
-Delivery worker retries when connectivity returns.
+No accepted message may be lost under crashes, network outages, or provider errors.
 
-## Graph API failure
+A message is considered accepted only after durable queue persistence using the atomic pattern:
 
-Simulate Microsoft Graph API returning errors.
+write -> fsync -> rename
 
-Expected behaviour:
 
-Delivery attempts fail.
-Messages remain in the queue.
-Worker retries delivery later.
+# Failure Scenarios
 
-## Disk full
+## Worker Crash
 
-Simulate disk capacity exhaustion.
+Scenario:
+The relay process is terminated while messages are queued or currently being processed.
 
-Expected behaviour:
+Test Procedure:
+1. Send several messages to the relay.
+2. Verify messages appear in the queue directory.
+3. Forcefully terminate the relay process.
+4. Restart the relay.
 
-SMTP ingest fails to write messages.
-SMTP server must reject new messages.
+Expected Result:
+Messages remain in the queue and are delivered after restart.
 
-## Worker crash
 
-Simulate unexpected worker termination.
+## Network Failure
 
-Expected behaviour:
+Scenario:
+Connectivity to Microsoft Graph API is temporarily unavailable.
 
-Messages remain safely stored in the queue.
-Worker resumes processing after restart.
+Test Procedure:
+1. Send several messages to the relay.
+2. Disable outbound connectivity or block the Graph endpoint.
+3. Observe worker behavior.
+
+Expected Result:
+Messages remain queued and retry later when connectivity is restored.
+
+
+## API Temporary Error
+
+Scenario:
+The provider returns temporary failures (5xx or retryable responses).
+
+Test Procedure:
+1. Simulate temporary provider errors.
+2. Observe retry behavior.
+
+Expected Result:
+Worker retries delivery without message loss.
+
+
+## Disk Full
+
+Scenario:
+Queue disk becomes full.
+
+Test Procedure:
+1. Fill the disk where the queue directory resides.
+2. Attempt to submit new messages.
+
+Expected Result:
+SMTP ingest refuses new messages while preserving the existing queue.
+
+
+## Queue Recovery
+
+Scenario:
+Relay restarts after crash while queue contains messages.
+
+Test Procedure:
+1. Send messages.
+2. Crash the relay.
+3. Restart the relay.
+
+Expected Result:
+Queued messages resume delivery automatically.
+
+
+## Load Test
+
+Scenario:
+High message throughput.
+
+Test Procedure:
+Send 1000 messages through the relay.
+
+Expected Result:
+All messages are queued and processed successfully.
+
+
+# Success Criteria
+
+Lost messages = 0.
+
+
+# Failure Mode Matrix
+
+| Failure Mode | Trigger | Expected Behavior |
+|--------------|--------|------------------|
+| Worker Crash | Relay process killed | Messages remain in queue and deliver after restart |
+| Network Failure | Graph API unreachable | Messages remain queued and retry later |
+| API Temporary Error | Provider returns temporary failure | Worker retries delivery without message loss |
+| Disk Full | Queue disk exhausted | SMTP ingest rejects new messages while preserving queue |
+| Queue Recovery | Relay restart | Existing queue resumes processing |
+| Load Test | 1000 messages sent | All messages processed with zero loss |
